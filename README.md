@@ -1,3 +1,3 @@
 # All-Dream
-A co-op game developed by 2 beginners
-no this is not co op this will be a offline horror game with liminal world and yk i cant spoil things up
+A developed by 2 beginners, its is horror game featuring liminal worlds with bosses respectively with worlds
+give this game a shot maybe you will like it
