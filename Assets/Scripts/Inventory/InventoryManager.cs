@@ -146,5 +146,17 @@ public class InventoryManager : MonoBehaviour
         return false;
     }
 
+    /// <summary>Returns the storage-slot index holding a stack of the given item, or -1.</summary>
+    public int FindSlotContaining(ItemData item)
+    {
+        if (item == null) return -1;
+        for (int i = 0; i < slots.Length; i++)
+        {
+            if (i == handSlotIndex) continue;
+            if (!slots[i].IsEmpty && slots[i].item == item) return i;
+        }
+        return -1;
+    }
+
     public void ForceRefreshUI() => OnInventoryChanged?.Invoke();
 }

@@ -3,11 +3,12 @@ using System;
 
 // Put this on your Player (or Main Camera). Handles:
 //  - Right Click: raycast forward, if it hits a Pickable, pick it up.
-//  - E: drop the currently SELECTED slot's item in front of the player.
+//  - E: drop the item in the currently ACTIVE slot in front of the player.
 //  - Number keys 1-4: select that hotbar slot directly (matches UI highlight).
 //
 // Selection: number keys or clicking a UI slot both set SelectedSlotIndex.
-// If nothing has been selected yet, dropping falls back to the last filled slot.
+// Drop only affects the selected (active) slot — you can never drop from any
+// other slot.
 public class PlayerInteractor : MonoBehaviour
 {
     [Header("References")]
@@ -52,9 +53,9 @@ public class PlayerInteractor : MonoBehaviour
             TryPickupInFrontOfPlayer();
         }
 
-        if (Input.GetKeyDown(KeyCode.E)) // Drop
+        if (Input.GetKeyDown(KeyCode.E)) // Drop the currently selected slot's item
         {
-            DropSelectedOrLastItem();
+            DropSelectedItem();
         }
 
         if (allowNumberKeySelection)
@@ -84,24 +85,26 @@ public class PlayerInteractor : MonoBehaviour
         if (Physics.Raycast(ray, out RaycastHit hit, interactRange, pickupLayerMask))
         {
             Pickable pickable = hit.collider.GetComponentInParent<Pickable>();
-            if (pickable != null)
+            if (pickable != null && pickable.TryPickup())
             {
-                pickable.TryPickup();
+                // Auto-select the slot the item landed in so the held 3D model
+                // pops up right away and E drops that item immediately.
+                int slotIndex = InventoryManager.Instance.FindSlotContaining(pickable.itemData);
+                if (slotIndex >= 0) SelectSlot(slotIndex);
             }
         }
     }
 
-    private void DropSelectedOrLastItem()
+    private void DropSelectedItem()
     {
         int index = SelectedSlotIndex;
 
-        // Fall back to dropping the most recently filled storage slot.
-        if (index < 0 || InventoryManager.Instance.IsSlotEmpty(index))
-        {
-            index = InventoryManager.Instance.GetLastFilledStorageSlot();
-        }
-
-        if (index < 0) return; // nothing to drop
+        // Only the currently ACTIVE slot can be dropped. If nothing has been
+        // selected yet, or the selected slot is the hand slot or is empty,
+        // pressing E simply does nothing.
+        if (index < 0) return; // no slot selected yet -> nothing to drop
+        if (index == InventoryManager.Instance.handSlotIndex) return; // hand slot is not droppable
+        if (InventoryManager.Instance.IsSlotEmpty(index)) return; // active slot empty -> do nothing
 
         var removed = InventoryManager.Instance.RemoveSlot(index);
         if (removed == null) return;
