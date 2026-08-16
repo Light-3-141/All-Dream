@@ -1,4 +1,4 @@
-# no name currently
+# no name currently hmm tinking will liminal be good or like idk
 
 A first person psychological horror game.
 
