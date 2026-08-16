@@ -20,12 +20,16 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
     [Header("References")]
     public PlayerInteractor playerInteractor; // to set SelectedSlotIndex on click
 
-    [Header("Selection Look")]
+        [Header("Selection Look")]
     [Tooltip("Border color used while this slot is the active selection.")]
     public Color selectedBorderColor = new Color(1f, 0.84f, 0f, 1f); // gold frame
+    [Tooltip("Optional: an Image shown only while this slot is selected (e.g. a bottom underline). " +
+            "If left empty, a gold bar is created at runtime under the slot.")]
+    public Image activeBarImage;
 
     // This script sits on the border GameObject, so its own Image IS the border.
     private Image borderImage;
+    private Image _runtimeActiveBar;
     private Color defaultBorderColor;
 
     // Animation state (pop-in + border-color tween).
@@ -33,23 +37,50 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
     private Coroutine _popRoutine;
     private Coroutine _colorRoutine;
 
-    void Awake()
+        void Awake()
     {
         // Capture the border color before any selection logic can change it.
         borderImage = GetComponent<Image>();
         if (borderImage != null) defaultBorderColor = borderImage.color;
+
+        // Make sure there's an "active bar" to highlight the selected slot with.
+        // (Created at runtime so you don't have to rebuild the UI.)
+        EnsureActiveBar();
+    }
+
+    private void EnsureActiveBar()
+    {
+        if (activeBarImage != null) return;
+
+        GameObject barGO = new GameObject("ActiveBar", typeof(RectTransform), typeof(Image));
+        barGO.transform.SetParent(transform, false);
+        RectTransform rt = barGO.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(0, 0);
+        rt.anchorMax = new Vector2(1, 0);
+        rt.pivot = new Vector2(0.5f, 0f);
+        rt.anchoredPosition = new Vector2(0, 0);
+        rt.sizeDelta = new Vector2(0, 6f);
+        activeBarImage = barGO.GetComponent<Image>();
+        activeBarImage.raycastTarget = false;
+        Color c = selectedBorderColor; c.a = 0f;
+        activeBarImage.color = c;
     }
 
     void Start()
     {
+        // Subscribe here (not OnEnable) so InventoryManager.Instance is guaranteed ready —
+        // OnEnable can run before InventoryManager's Awake, which would silently skip the
+        // subscription and make slots only refresh on selection change (drops wouldn't clear).
+        if (InventoryManager.Instance != null)
+            InventoryManager.Instance.OnInventoryChanged += Refresh;
+
         Refresh();
         RefreshAllHighlights(); // make sure the correct slot shows as selected on scene start
     }
 
     void OnEnable()
     {
-        if (InventoryManager.Instance != null)
-            InventoryManager.Instance.OnInventoryChanged += Refresh;
+        // PlayerInteractor is a serialized reference, so this subscription is order-safe.
         if (playerInteractor != null)
             playerInteractor.OnSelectedSlotChanged += OnSelectedSlotChanged;
     }
@@ -68,14 +99,32 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
     // Fired by PlayerInteractor whenever selection changes (click OR number key).
     private void OnSelectedSlotChanged(int newIndex)
     {
+        Refresh();
         RefreshAllHighlights();
+    }
+
+    // True when this slot is the "hand"/active slot: it always shows whatever you're holding.
+    private bool IsHandSlot()
+        => InventoryManager.Instance != null && slotIndex == InventoryManager.Instance.handSlotIndex;
+
+    // The hand slot reflects the currently selected slot (the thing in your hand).
+    private InventorySlot GetDisplaySlot(InventoryManager inv)
+    {
+        if (!IsHandSlot()) return inv.slots[slotIndex];
+
+        int sel = playerInteractor != null ? playerInteractor.SelectedSlotIndex : -1;
+        if (sel < 0 || sel >= inv.slots.Length || sel == inv.handSlotIndex) return null;
+        return inv.slots[sel];
     }
 
     public void Refresh()
     {
-        var slot = InventoryManager.Instance.slots[slotIndex];
+        var inv = InventoryManager.Instance;
+        if (inv == null) return;
 
-        if (slot.IsEmpty)
+        var slot = GetDisplaySlot(inv);
+
+        if (slot == null || slot.IsEmpty)
         {
             if (iconImage != null)
             {
@@ -88,10 +137,12 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
         }
         else
         {
-            if (iconImage != null)
+                        if (iconImage != null)
             {
                 iconImage.enabled = true;
-                iconImage.sprite = slot.item.icon;
+                // Real icon if assigned, otherwise a generated fallback tile so the
+                // slot is never blank (the cube's icon is a built-in that's null).
+                iconImage.sprite = ItemIconDatabase.Get(slot.item);
             }
             if (quantityText != null)
                 quantityText.text = (slot.item.isStackable && slot.quantity > 1) ? slot.quantity.ToString() : "";
@@ -120,7 +171,7 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
         var allSlots = transform.parent.GetComponentsInChildren<InventorySlotUI>();
         int selected = playerInteractor != null ? playerInteractor.SelectedSlotIndex : -1;
 
-        foreach (var s in allSlots)
+                foreach (var s in allSlots)
         {
             bool isSelected = (s.slotIndex == selected);
 
@@ -136,6 +187,14 @@ public class InventorySlotUI : MonoBehaviour, IPointerClickHandler
             // New look: tint the slot's border frame gold when selected (tweened).
             if (s.borderImage != null)
                 s.TweenBorderColor(isSelected ? s.selectedBorderColor : s.defaultBorderColor);
+
+            // Gold accent bar that slides on under the selected slot.
+            if (s.activeBarImage != null)
+            {
+                Color c = s.selectedBorderColor;
+                c.a = isSelected ? 0.92f : 0f;
+                s.activeBarImage.color = c;
+            }
         }
     }
 

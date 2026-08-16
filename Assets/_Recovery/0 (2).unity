@@ -156,11 +156,11 @@ RectTransform:
   - {fileID: 1980917608}
   m_Father: {fileID: 667823471}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
-  m_AnchorMin: {x: 0.5, y: 0}
-  m_AnchorMax: {x: 0.5, y: 0}
-  m_AnchoredPosition: {x: 0, y: 30}
+  m_AnchorMin: {x: 0.5, y: 0.5}
+  m_AnchorMax: {x: 0.5, y: 0.5}
+  m_AnchoredPosition: {x: 0, y: 0}
   m_SizeDelta: {x: 0, y: 0}
-  m_Pivot: {x: 0.5, y: 0}
+  m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &57788719
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -218,7 +218,7 @@ MonoBehaviour:
   m_Padding:
     m_Left: 0
     m_Right: 0
-    m_Top: 8
+    m_Top: 587
     m_Bottom: 0
   m_ChildAlignment: 4
   m_Spacing: 6
@@ -289,7 +289,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a222fea39f2ce187a9fc4841cbd794cf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::EnemyController
-  maxHealth: 200
+  maxHealth: 100
   healthBarHeight: 2.4
   healthBarSize: {x: 1.9, y: 0.22}
   bodyModelPrefab: {fileID: 0}
@@ -846,7 +846,7 @@ MonoBehaviour:
   inventoryManager: {fileID: 1183544035}
   weaponModelPrefab: {fileID: 919132149155446097, guid: 59581bafa3fb828af94fde9c11bb7179, type: 3}
   modelSize: -0.45
-  viewmodelOffset: {x: 0.24, y: -0.16, z: 0.5}
+  viewmodelOffset: {x: 0.16, y: -0.16, z: 0.5}
   viewmodelRotation: {x: 0, y: 0, z: 0}
   muzzlePoint: {fileID: 0}
   knockbackForce: 3

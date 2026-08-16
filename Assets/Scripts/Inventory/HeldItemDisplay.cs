@@ -36,6 +36,9 @@ public class HeldItemDisplay : MonoBehaviour
     [Tooltip("Gentle up/down bob while held. Set to 0 to disable.")]
     public float bobAmount = 0.012f;
 
+    [Tooltip("How quickly the held object catches up to the camera each frame. Higher = snappier.")]
+    public float followSmooth = 24f;
+
     private GameObject heldObject;
     private Coroutine _punchRoutine;
 
@@ -54,20 +57,27 @@ public class HeldItemDisplay : MonoBehaviour
 
     void OnEnable()
     {
-        if (InventoryManager.Instance != null)
-            InventoryManager.Instance.OnInventoryChanged += Refresh;
         if (playerInteractor != null)
             playerInteractor.OnSelectedSlotChanged += OnSelectedSlotChanged;
 
         Refresh();
     }
 
+    void Start()
+    {
+        // Subscribe to inventory changes here (Start) rather than OnEnable so the
+        // singleton is guaranteed to already exist — otherwise drops wouldn't update
+        // the held viewmodel until you switch slots.
+        if (InventoryManager.Instance != null)
+            InventoryManager.Instance.OnInventoryChanged += Refresh;
+    }
+
     void OnDisable()
     {
-        if (InventoryManager.Instance != null)
-            InventoryManager.Instance.OnInventoryChanged -= Refresh;
         if (playerInteractor != null)
             playerInteractor.OnSelectedSlotChanged -= OnSelectedSlotChanged;
+        if (InventoryManager.Instance != null)
+            InventoryManager.Instance.OnInventoryChanged -= Refresh;
 
         DestroyHeldObject();
     }
@@ -158,15 +168,31 @@ public class HeldItemDisplay : MonoBehaviour
         if (holdAnchor == null) return;
 
         Transform cam = holdAnchor;
+
+        // Keep the viewmodel inside a sane window so a bad inspector value can never
+        // push the held item off-screen (e.g. a huge +X offset). You can still tune
+        // holdOffset freely within these bounds.
+        Vector3 off = new Vector3(
+            Mathf.Clamp(holdOffset.x, 0.05f, 0.7f),
+            Mathf.Clamp(holdOffset.y, -0.6f, 0.6f),
+            Mathf.Clamp(holdOffset.z, 0.3f, 1.3f));
+
         float bob = 0f;
         if (bobAmount > 0f)
             bob = Mathf.Sin(Time.time * 3f) * bobAmount;
 
-        heldObject.transform.position = cam.position
-            + cam.right * holdOffset.x
-            + cam.up * (holdOffset.y + bob)
-            + cam.forward * holdOffset.z;
-        heldObject.transform.rotation = cam.rotation * Quaternion.Euler(holdRotation);
+        Vector3 targetPos = cam.position
+            + cam.right * off.x
+            + cam.up * (off.y + bob)
+            + cam.forward * off.z;
+        Quaternion targetRot = cam.rotation * Quaternion.Euler(holdRotation);
+
+        // Smoothly catch up instead of snapping each frame — this removes the
+        // one-frame jitter you get when the camera updates in its own LateUpdate.
+        Transform t = heldObject.transform;
+        float k = Mathf.Clamp01(followSmooth * Time.deltaTime);
+        t.position = Vector3.Lerp(t.position, targetPos, k);
+        t.rotation = Quaternion.Slerp(t.rotation, targetRot, k);
     }
 
     private void PlaySpawnPunch()

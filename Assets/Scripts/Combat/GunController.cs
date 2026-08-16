@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using UnityEngine.UI;
 
 // Working hit-scan gun. Attach this to your gun model (or any empty object).
 //
@@ -19,11 +20,18 @@ public class GunController : MonoBehaviour
     [Tooltip("Camera used to aim/shoot. Auto-found via Camera.main if empty.")]
     public Camera fireCamera;
 
+    [Header("Field of View")]
+    [Tooltip("Sets the camera's Field of View (degrees). Applied every frame so it always wins. Default 40 to match the Main Camera.")]
+    [Range(30f, 120f)] public float fov = 40f;
+
     [Tooltip("The part that recoils and shows the muzzle flash.")]
     public Transform weaponPivot;
 
-    [Header("Fire")]
-    public int damage = 60;
+    [Header("Damage")]
+    [Tooltip("Lowest damage any single bullet deals.")]
+    public int damageMin = 35;
+    [Tooltip("Highest damage any single bullet deals (inclusive).")]
+    public int damageMax = 55;
     public float fireRate = 12f;      // shots per second
     public float range = 200f;
     public LayerMask shootMask = ~0;
@@ -33,14 +41,53 @@ public class GunController : MonoBehaviour
     public float recoilRestoreSpeed = 9f;
     public float kickPitch = 0.6f;       // gun jumps up this many degrees
 
-    [Header("Ammo (optional)")]
-    public int magazineSize = 30;
+    [Header("Ammo")]
+    [Tooltip("Bullets per magazine (default 4, then you reload).")]
+    public int magazineSize = 4;
     public float reloadTime = 1.4f;
-    public bool infiniteAmmo = true;
+    public bool infiniteAmmo = false;
+    [Tooltip("Press this key to reload when the magazine is empty.")]
+    public KeyCode reloadKey = KeyCode.R;
+    [Tooltip("If true, the gun only fires while its reserved inventory slot (slot 4) is selected/equipped.")]
+    public bool requireEquip = true;
 
-    [Header("FX")]
-    [Tooltip("Seconds a muzzle flash / impact spark stays visible.")]
-    public float fxLifetime = 0.08f;
+    [Tooltip("For requireEquip. Auto-found if empty.")]
+    public PlayerInteractor playerInteractor;
+    [Tooltip("For requireEquip. Auto-found if empty.")]
+    public InventoryManager inventoryManager;
+
+            [Header("Model")]
+    [Tooltip("Your real gun model. If empty and nothing has a renderer, a blocky placeholder pistol is built for you.\nThe model should be a child object so it inherits the gun's recoil.")]
+    public GameObject weaponModelPrefab;
+
+    [Tooltip("Uniform size multiplier for the gun (custom model AND placeholder). Default 1.")]
+    public float modelSize = 1f;
+
+    [Header("Viewmodel")]
+    [Tooltip("Where the gun sits relative to the camera (x = right/left, y = up/down, z = forward). Increase x to move it to the right.")]
+    public Vector3 viewmodelOffset = new Vector3(0.16f, -0.16f, 0.5f);
+    [Tooltip("Extra rotation applied to the gun viewmodel (Euler degrees).")]
+    public Vector3 viewmodelRotation = Vector3.zero;
+
+    [Tooltip("Where flash/blood/rays come from. Defaults to this object (the gun root).")]
+    public Transform muzzlePoint;
+
+    [Header("Knockback")]
+    [Tooltip("Impulse applied to Rigidbodies you shoot, so bodies fly like real objects.")]
+    public float knockbackForce = 6f;
+
+    [Header("VFX (optional - leave empty to use built-in blood)")]
+    [Tooltip("If assigned, this is instantiated at the muzzle instead of the old cube flash (set to your own VFX later).")]
+    public GameObject muzzleFlashPrefab;
+    [Tooltip("If assigned, this is spawned at the hit point instead of blood (e.g. sparks for a metal surface).")]
+    public GameObject hitEffectPrefab;
+    [Tooltip("Seconds a custom muzzle flash / hit effect is left before being cleaned up.")]
+    public float vfxAutoDestroy = 10f;
+
+    [Header("Audio")]
+    public AudioClip shootSound;
+    [Range(0f, 1f)] public float shootVolume = 1f;
+    public AudioClip reloadSound;
 
     private int _ammo;
     private bool _reloading;
@@ -51,8 +98,6 @@ public class GunController : MonoBehaviour
 
     private Material _metalMat;
     private Material _darkMat;
-    private Material _flashMat;
-    private Material _sparkMat;
 
     void Awake()
     {
@@ -64,8 +109,8 @@ public class GunController : MonoBehaviour
         if (fireCamera != null && !transform.IsChildOf(fireCamera.transform))
         {
             transform.SetParent(fireCamera.transform, false);
-            transform.localPosition = new Vector3(0.16f, -0.16f, 0.5f);
-            transform.localRotation = Quaternion.identity;
+            transform.localPosition = viewmodelOffset;              // e.g. increase x for more right
+            transform.localRotation = Quaternion.Euler(viewmodelRotation);
         }
         if (weaponPivot == null) weaponPivot = transform;
 
@@ -76,6 +121,18 @@ public class GunController : MonoBehaviour
         if (weaponPivot != null && transform.IsChildOf(weaponPivot))
             weaponPivot = transform;
 
+                // Optional: drop your own gun model here. Parented to the gun root so it
+        // inherits the recoil automatically.
+        if (weaponModelPrefab != null)
+        {
+            GameObject model = Instantiate(weaponModelPrefab, transform, false);
+            model.transform.localPosition = Vector3.zero;
+            model.transform.localRotation = Quaternion.identity;
+            model.transform.localScale = model.transform.localScale * Mathf.Max(0.01f, modelSize);
+        }
+
+        if (muzzlePoint == null) muzzlePoint = weaponPivot != null ? weaponPivot : transform;
+
         _restPos = weaponPivot.localPosition;
         _restRot = weaponPivot.localRotation;
         _ammo = magazineSize;
@@ -84,9 +141,47 @@ public class GunController : MonoBehaviour
         if (!HasVisual()) BuildPlaceholderPistol();
 
         // The gun is a viewmodel: it must NEVER push the player. Any collider
-        // or rigidbody on a hand-made gun (rebuilt at runtime OR still in the
-        // hierarchy) is disabled here so it can't shove the character around.
+        // or rigidbody on the gun (your model or the placeholder parts) is
+        // disabled here so it can't shove the character around.
         DisableGunPhysics();
+
+        // Cache references and add a small ammo counter to the HUD (only when finite ammo).
+        if (playerInteractor == null) playerInteractor = FindFirstObjectByType<PlayerInteractor>();
+        if (inventoryManager == null) inventoryManager = FindFirstObjectByType<InventoryManager>();
+        CreateAmmoUI();
+
+        // Remember the gun's model parts so we can hide them when the gun isn't equipped.
+        _visualRenderers = GetComponentsInChildren<Renderer>(true);
+        UpdateGunVisibility();
+    }
+
+    // A simple HUD read-out for the magazine, e.g. "Ammo  3 / 4".
+    private Text _ammoText;
+    private Renderer[] _visualRenderers;
+    private void CreateAmmoUI()
+    {
+        if (infiniteAmmo) return;
+        Canvas canvas = HealthBarUI.FindHUDCanvas();
+        if (canvas == null) return;
+
+        GameObject go = new GameObject("Ammo", typeof(RectTransform), typeof(Text));
+        go.layer = 5;
+        go.transform.SetParent(canvas.transform, false);
+
+        RectTransform rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = new Vector2(1f, 0f);
+        rt.anchorMax = new Vector2(1f, 0f);
+        rt.pivot = new Vector2(1f, 0f);
+        rt.anchoredPosition = new Vector2(-20f, 20f);
+        rt.sizeDelta = new Vector2(140f, 26f);
+
+        _ammoText = go.GetComponent<Text>();
+        _ammoText.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        _ammoText.alignment = TextAnchor.MiddleRight;
+        _ammoText.fontSize = 18;
+        _ammoText.color = new Color(1f, 0.92f, 0.4f, 1f);
+        _ammoText.raycastTarget = false;
+        _ammoText.gameObject.SetActive(false);
     }
 
     private void DisableGunPhysics()
@@ -102,13 +197,27 @@ public class GunController : MonoBehaviour
 
     void Update()
     {
+        // Enforce camera FOV every frame (simple, reliable, wins over anything else).
+        if (fireCamera != null && Mathf.Abs(fireCamera.fieldOfView - fov) > 0.01f)
+            fireCamera.fieldOfView = fov;
+
         // Smoothly return the gun to its resting pose after recoil.
         weaponPivot.localPosition = Vector3.Lerp(weaponPivot.localPosition, _restPos, recoilRestoreSpeed * Time.deltaTime);
         weaponPivot.localRotation = Quaternion.Slerp(weaponPivot.localRotation, _restRot, recoilRestoreSpeed * Time.deltaTime);
 
+        UpdateGunVisibility();
+        UpdateAmmoUI();
+
+        // Manual reload (R) whenever the mag isn't full.
+        if (Input.GetKeyDown(reloadKey) && !_reloading && !infiniteAmmo)
+        {
+            StartCoroutine(ReloadRoutine());
+            return;
+        }
+
         if (_reloading) return;
 
-        if (Input.GetMouseButton(0)) // Left mouse held to fire
+        if (Input.GetMouseButton(0) && IsGunEquipped()) // Left mouse held to fire (gun must be equipped)
         {
             if (_ammo > 0 || infiniteAmmo)
             {
@@ -116,16 +225,50 @@ public class GunController : MonoBehaviour
             }
             else if (!_reloading)
             {
-                StartCoroutine(ReloadRoutine());
+                StartCoroutine(ReloadRoutine()); // all 4 bullets used -> auto reload
             }
         }
     }
 
-    private void Fire()
+    // The gun only fires while its reserved slot (slot 4) is selected, unless requireEquip is off.
+    private bool IsGunEquipped()
+    {
+        if (!requireEquip) return true;
+        int gun = inventoryManager != null ? inventoryManager.GunSlotIndex : -1;
+        if (gun < 0) return true; // no reserved gun slot -> gun always usable
+        return playerInteractor != null && playerInteractor.SelectedSlotIndex == gun;
+    }
+
+    private void UpdateAmmoUI()
+    {
+        if (_ammoText == null) return;
+        bool equipped = IsGunEquipped();
+        if (_ammoText.gameObject.activeSelf != equipped)
+            _ammoText.gameObject.SetActive(equipped);
+        if (!equipped) return;
+        _ammoText.text = _reloading ? "Reloading..." : $"Ammo  {_ammo} / {magazineSize}";
+    }
+
+    // Show the gun's model only while its reserved slot (slot 4) is equipped; otherwise
+    // hide it so you don't hold a gun you can't fire (and the inventory viewmodel shows instead).
+    private void UpdateGunVisibility()
+    {
+        if (_visualRenderers == null || _visualRenderers.Length == 0) return;
+        bool show = !requireEquip || IsGunEquipped();
+        for (int i = 0; i < _visualRenderers.Length; i++)
+        {
+            Renderer r = _visualRenderers[i];
+            if (r != null && r.enabled != show) r.enabled = show;
+        }
+    }
+
+        private void Fire()
     {
         _nextFireTime = Time.time + 1f / fireRate;
         if (!infiniteAmmo) _ammo--;
 
+        SoundFX.Play(muzzlePoint != null ? muzzlePoint : transform, shootSound, shootVolume);
+        SpawnMuzzleFlash();
         ApplyKick();
 
         if (fireCamera == null) return;
@@ -133,21 +276,30 @@ public class GunController : MonoBehaviour
         Vector3 origin = fireCamera.transform.position;
         Vector3 dir = fireCamera.transform.forward;
 
-        if (Physics.Raycast(origin, dir, out RaycastHit hit, range, shootMask))
+        if (Physics.Raycast(origin, dir, out RaycastHit hit, range, shootMask, QueryTriggerInteraction.Ignore))
         {
+            // Deal randomized damage.
             IDamageable enemy = hit.collider.GetComponentInParent<IDamageable>();
             if (enemy != null)
-                enemy.TakeDamage(damage, hit.point, -dir);
+            {
+                int dmg = Random.Range(damageMin, damageMax + 1);
+                enemy.TakeDamage(dmg, hit.point, -dir);
+            }
 
-            SpawnImpact(hit.point, hit.normal);
-        }
-        else
-        {
-            // Tracer end point so you can see where the bullet "goes".
-            SpawnImpact(origin + dir * Mathf.Min(range, 60f), -dir);
-        }
+            // Real physics: push anything with a Rigidbody back like a real body.
+            if (knockbackForce > 0f && hit.rigidbody != null)
+                hit.rigidbody.AddForceAtPosition(dir * knockbackForce, hit.point, ForceMode.Impulse);
 
-        SpawnMuzzleFlash();
+            // Hit effect: custom VFX if you added one, otherwise a blood squib
+            // that bursts out from the exact point/normal we hit.
+            if (hitEffectPrefab != null)
+            {
+                GameObject fx = Instantiate(hitEffectPrefab, hit.point, Quaternion.LookRotation(hit.normal));
+                Destroy(fx, vfxAutoDestroy);
+            }
+            else BloodVFX.Spawn(hit.point, hit.normal);
+        }
+        // (no tracer spark cube - removed on purpose)
     }
 
     private void ApplyKick()
@@ -156,32 +308,13 @@ public class GunController : MonoBehaviour
         weaponPivot.localRotation = _restRot * Quaternion.Euler(-kickPitch, Random.Range(-2f, 2f), 0f);
     }
 
-    // Small bright flash that blinks at the muzzle tip.
+            // Only drawn if you assign a muzzleFlashPrefab (your own VFX). The old blocky
+    // cube flash is gone — plug your own effect in the inspector "VFX" section.
     private void SpawnMuzzleFlash()
     {
-        GameObject flash = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        flash.name = "MuzzleFlash";
-        flash.transform.SetParent(weaponPivot, false);
-        flash.transform.localPosition = new Vector3(0f, 0.04f, 0.28f);
-        flash.transform.localRotation = Quaternion.identity;
-        flash.transform.localScale = new Vector3(0.05f, 0.05f, 0.12f);
-        RemoveCollider(flash);
-        Renderer r = flash.GetComponent<Renderer>();
-        if (r != null) r.material = _flashMat;
-        Destroy(flash, fxLifetime);
-    }
-
-    private void SpawnImpact(Vector3 point, Vector3 normal)
-    {
-        GameObject spark = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        spark.name = "BulletImpact";
-        spark.transform.position = point + normal * 0.02f;
-        spark.transform.rotation = Quaternion.LookRotation(normal) * Quaternion.Euler(0f, 0f, Random.Range(0f, 360f));
-        spark.transform.localScale = Vector3.one * 0.03f;
-        RemoveCollider(spark);
-        Renderer r = spark.GetComponent<Renderer>();
-        if (r != null) r.material = _sparkMat;
-        Destroy(spark, fxLifetime);
+        if (muzzleFlashPrefab == null || muzzlePoint == null) return;
+        GameObject fx = Instantiate(muzzleFlashPrefab, muzzlePoint.position, muzzlePoint.rotation, muzzlePoint);
+        Destroy(fx, vfxAutoDestroy);
     }
 
     // ---------------------------------------------------------------
@@ -208,18 +341,16 @@ public class GunController : MonoBehaviour
         part.transform.SetParent(transform, false);
         part.transform.localPosition = localPos;
         part.transform.localRotation = Quaternion.identity;
-        part.transform.localScale = size;
+        part.transform.localScale = size * Mathf.Max(0.01f, modelSize);
         RemoveCollider(part);
         Renderer r = part.GetComponent<Renderer>();
         if (r != null) r.material = material;
     }
 
-    private void CreateMaterials()
+            private void CreateMaterials()
     {
         _metalMat = MakeMat(new Color(0.30f, 0.32f, 0.35f));
         _darkMat = MakeMat(new Color(0.08f, 0.08f, 0.09f));
-        _flashMat = MakeMat(new Color(1.0f, 0.9f, 0.5f));
-        _sparkMat = MakeMat(new Color(1.0f, 0.5f, 0.1f));
     }
 
     private Material MakeMat(Color color)
@@ -245,9 +376,10 @@ public class GunController : MonoBehaviour
         }
     }
 
-    private IEnumerator ReloadRoutine()
+            private IEnumerator ReloadRoutine()
     {
         _reloading = true;
+        SoundFX.Play(transform, reloadSound, 0.6f);
         yield return new WaitForSeconds(reloadTime);
         _ammo = magazineSize;
         _reloading = false;

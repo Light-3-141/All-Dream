@@ -46,6 +46,16 @@ public class PlayerInteractor : MonoBehaviour
             dropPoint = playerCamera != null ? playerCamera.transform : transform;
     }
 
+    void Start()
+    {
+        // Auto-equip the reserved gun slot so the gun is ready to fire immediately.
+        if (InventoryManager.Instance != null && InventoryManager.Instance.GunSlotIndex >= 0 &&
+            SelectedSlotIndex < 0)
+        {
+            SelectSlot(InventoryManager.Instance.GunSlotIndex);
+        }
+    }
+
     void Update()
     {
         if (Input.GetMouseButtonDown(1)) // Right Click
@@ -103,7 +113,7 @@ public class PlayerInteractor : MonoBehaviour
         // selected yet, or the selected slot is the hand slot or is empty,
         // pressing E simply does nothing.
         if (index < 0) return; // no slot selected yet -> nothing to drop
-        if (index == InventoryManager.Instance.handSlotIndex) return; // hand slot is not droppable
+        if (InventoryManager.Instance.IsReservedSlot(index)) return; // hand & gun can't be dropped
         if (InventoryManager.Instance.IsSlotEmpty(index)) return; // active slot empty -> do nothing
 
         var removed = InventoryManager.Instance.RemoveSlot(index);

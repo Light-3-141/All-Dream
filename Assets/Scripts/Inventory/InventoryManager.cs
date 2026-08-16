@@ -16,7 +16,21 @@ public class InventoryManager : MonoBehaviour
     [Tooltip("Index of the hand slot. Leave at 0 (left-most).")]
     public int handSlotIndex = 0;
 
+    [Tooltip("Index reserved for the player's gun (the 4th UI slot = index 3). -1 disables the weapon slot.")]
+    public int gunSlotIndex = 3;
+
+    [Tooltip("Optional sprite shown as the gun's icon in the inventory (slot 4 + the hand slot). " +
+             "Drag a sprite here to replace the default auto-generated tile.")]
+    public Sprite gunIcon;
+
     public InventorySlot[] slots;
+
+    /// <summary>True if a slot is reserved (hand or gun) and can't be filled by normal pickup.</summary>
+    public bool IsReservedSlot(int index)
+        => index == handSlotIndex || (gunSlotIndex >= 0 && index == gunSlotIndex);
+
+    /// <summary>The reserved gun slot index, or -1 if disabled.</summary>
+    public int GunSlotIndex => gunSlotIndex >= 0 && gunSlotIndex < slotCount ? gunSlotIndex : -1;
 
     // Fired whenever inventory contents change, so UI can refresh.
     public event Action OnInventoryChanged;
@@ -33,6 +47,26 @@ public class InventoryManager : MonoBehaviour
         slots = new InventorySlot[slotCount];
         for (int i = 0; i < slotCount; i++)
             slots[i] = new InventorySlot();
+
+        // Reserve a slot for the gun so it's always present (icon shows, not stackable/droppable).
+        if (GunSlotIndex >= 0 && GunSlotIndex != handSlotIndex)
+            slots[GunSlotIndex].Set(CreateGunItem(), 1, null);
+
+        OnInventoryChanged?.Invoke();
+    }
+
+    // A runtime Gun item (no asset file needed). Icon comes from the gunIcon field if set,
+    // otherwise ItemIconDatabase's auto-generated fallback tile.
+    private ItemData CreateGunItem()
+    {
+        ItemData gun = ScriptableObject.CreateInstance<ItemData>();
+        gun.name = "Gun";
+        gun.itemName = "Gun";
+        gun.description = "Your weapon. Reserved in slot 4 — select it to equip and fire.";
+        gun.isStackable = false;
+        gun.maxStackSize = 1;
+        gun.icon = gunIcon; // optional custom icon; null => fallback tile
+        return gun;
     }
 
     // ---------- Public API ----------
@@ -50,7 +84,7 @@ public class InventoryManager : MonoBehaviour
         {
             for (int i = 0; i < slots.Length; i++)
             {
-                if (i == handSlotIndex) continue; // never auto-stack into hand
+                if (IsReservedSlot(i)) continue; // never auto-stack into reserved slots
                 var slot = slots[i];
                 if (!slot.IsEmpty && slot.item == item && slot.quantity < item.maxStackSize)
                 {
@@ -71,7 +105,7 @@ public class InventoryManager : MonoBehaviour
         // 2. Put remainder into the first empty storage slot.
         for (int i = 0; i < slots.Length; i++)
         {
-            if (i == handSlotIndex) continue; // hand stays reserved
+            if (IsReservedSlot(i)) continue; // hand & gun stay reserved
             if (slots[i].IsEmpty)
             {
                 slots[i].Set(item, amount, sourcePrefab);
